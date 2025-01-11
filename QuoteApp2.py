@@ -1,66 +1,99 @@
-import streamlit as st
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+import joblib
+from flask import Flask, request, jsonify
 
-# Function to get user inputs
-def get_user_inputs():
-    job_type = st.selectbox("Select Job Type", ["Lawn Care", "Tree Trimming", "Garden Design"])
-    size_category = st.selectbox("Select Size Category", ["Small", "Medium", "Large"])
-    terrain_complexity = st.selectbox("Select Terrain Complexity", ["Flat", "Sloped", "Rocky"])
-    special_requests = st.text_area("Special Requests")
-    return job_type, size_category, terrain_complexity, special_requests
+# Initialize the Flask application
+app = Flask(__name__)
 
-# Function to calculate the quote
-def calculate_quote(job_type, size_category, terrain_complexity, special_requests):
-    # Base costs for each job type
-    base_costs = {
-        "Lawn Care": 50,
-        "Tree Trimming": 100,
-        "Garden Design": 150
-    }
-    # Multipliers based on size category
-    size_multipliers = {
-        "Small": 1.0,
-        "Medium": 1.5,
-        "Large": 2.0
-    }
-    # Multipliers based on terrain complexity
-    terrain_multipliers = {
-        "Flat": 1.0,
-        "Sloped": 1.2,
-        "Rocky": 1.5
-    }
-    # Fetch base cost, size multiplier, and terrain multiplier
-    base_cost = base_costs.get(job_type, 0)
-    size_multiplier = size_multipliers.get(size_category, 1)
-    terrain_multiplier = terrain_multipliers.get(terrain_complexity, 1)
-    # Calculate the total quote
-    quote = base_cost * size_multiplier * terrain_multiplier
-    # Adjust quote based on special requests (e.g., adding 10% for special requests)
-    if special_requests:
-        quote *= 1.1
-    return quote
+# Load the dataset (assumes CSV file with job details and quote prices)
+def load_data(file_path):
+    df = pd.read_csv(file_path)
+    return df
 
-# Function to display the quote
-def display_quote(quote):
-    st.write(f"**Estimated Quote: ${quote:.2f}**")
+# Train the Random Forest model
+def train_model(data):
+    # Assume the data has features: area, labor_hours, material_cost, etc., and target: price
+    X = data[['area', 'labor_hours', 'material_cost']]  # Features
+    y = data['price']  # Target variable
+    
+    # Split the data into training and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Initialize the model
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    
+    # Train the model
+    model.fit(X_train, y_train)
+    
+    # Evaluate the model
+    y_pred = model.predict(X_test)
+    mse = mean_squared_error(y_test, y_pred)
+    print(f'Mean Squared Error: {mse}')
+    
+    # Save the model to a file
+    joblib.dump(model, 'landscaping_model.pkl')
 
-# Function to track performance metrics
-import time
-def track_performance():
-    start_time = time.time()
-    # Simulate quote calculation
-    time.sleep(0.1)
-    end_time = time.time()
-    execution_time = end_time - start_time
-    st.write(f"**Execution Time: {execution_time:.4f} seconds**")
+# Load the pre-trained model
+def load_model():
+    return joblib.load('landscaping_model.pkl')
 
-# Main function to run the application
-def main():
-    st.title("Landscaping Quote Application")
-    job_type, size_category, terrain_complexity, special_requests = get_user_inputs()
-    quote = calculate_quote(job_type, size_category, terrain_complexity, special_requests)
-    display_quote(quote)
-    track_performance()
+# Route to train the model (can be triggered manually)
+@app.route('/train', methods=['POST'])
+def train():
+    try:
+        # Load data from uploaded CSV file
+        file = request.files['file']
+        df = pd.read_csv(file)
+        
+        # Train the model on the uploaded data
+        train_model(df)
+        
+        return jsonify({"message": "Model training complete!"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-if __name__ == "__main__":
-    main()
+# Route to predict a new quote
+@app.route('/predict', methods=['POST'])
+def predict():
+    try:
+        # Get input data (e.g., area, labor_hours, material_cost)
+        input_data = request.get_json()
+        model = load_model()
+        
+        # Prepare input data
+        features = np.array([[
+            input_data['area'],
+            input_data['labor_hours'],
+            input_data['material_cost']
+        ]])
+        
+        # Make a prediction
+        predicted_price = model.predict(features)[0]
+        
+        return jsonify({"predicted_price": predicted_price}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
+# Route to check model performance (e.g., accuracy, error)
+@app.route('/model_performance', methods=['GET'])
+def model_performance():
+    try:
+        model = load_model()
+        # Load a sample data set for evaluation (you can adjust this)
+        df = load_data('sample_test_data.csv')
+        X = df[['area', 'labor_hours', 'material_cost']]
+        y = df['price']
+        
+        y_pred = model.predict(X)
+        mse = mean_squared_error(y, y_pred)
+        return jsonify({"Mean Squared Error": mse}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# Main entry point
+if __name__ == '__main__':
+    app.run(debug=True)
